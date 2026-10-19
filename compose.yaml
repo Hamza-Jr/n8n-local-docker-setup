@@ -1,0 +1,102 @@
+networks:
+  n8n-network:
+
+
+services:
+  # -------------------------------
+  # 1. PostgreSQL database
+  # -------------------------------
+  postgres:
+    image: postgres:18
+    networks:
+     - n8n-network
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+
+      # Keep PostgreSQL data in the directory mounted below.
+      PGDATA: /var/lib/postgresql/data
+
+    volumes:
+      # Save database files on your disk, beside this compose.yaml file.
+      - ./postgres_data:/var/lib/postgresql/data
+
+  # -------------------------------
+  # 2. n8n automation platform
+  # -------------------------------
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION}
+    networks:
+     - n8n-network
+    restart: unless-stopped
+
+    ports:
+      # Only expose the local port on your own computer.
+      # ngrok can still reach n8n through Docker's internal network.
+      - "127.0.0.1:5678:5678"
+
+    environment:
+      # Connect n8n to the PostgreSQL service above.
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD}
+
+      # Keep the key stable so saved credentials remain decryptable.
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+
+      # Set the timezone for scheduled workflows and the container.
+      GENERIC_TIMEZONE: Africa/Casablanca
+      TZ: Africa/Casablanca
+
+      # Tell n8n its public HTTPS address for editor links and webhooks.
+      N8N_WEBHOOK_URL: ${NGROK_URL}/
+      N8N_EDITOR_BASE_URL: http://localhost:5678/
+
+      # n8n itself serves HTTP internally; ngrok provides public HTTPS.
+      N8N_PROXY_HOPS: "1"
+
+      # Store binary data produced by workflows on the mounted filesystem.
+      N8N_DEFAULT_BINARY_DATA_MODE: filesystem
+
+      # Allow community packages to be used as AI tools where supported.
+      N8N_COMMUNITY_PACKAGES_ALLOW_TOOL_USAGE: "true"
+
+      # Enforce appropriate permissions on n8n's settings file.
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+
+    volumes:
+      # Store n8n configuration, encryption-related files and binary data on D:.
+      - ./n8n_data:/home/node/.n8n
+
+    depends_on:
+     - postgres
+
+  # -------------------------------
+  # 3. ngrok public HTTPS tunnel
+  # -------------------------------
+  ngrok:
+    image: ngrok/ngrok:latest
+    networks:
+     - n8n-network
+    restart: unless-stopped
+
+    # Forward public HTTPS traffic to n8n's internal Docker address.
+    command: ["http", "n8n:5678", "--url=${NGROK_URL}"]
+
+    environment:
+      # Authentication token from your ngrok account.
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+
+    ports:
+      # Optional local ngrok diagnostic dashboard.
+      # Not exposed to your network or the public internet.
+      - "127.0.0.1:4040:4040"
+
+    depends_on:
+      - n8n
